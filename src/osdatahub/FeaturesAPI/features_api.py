@@ -1,4 +1,5 @@
 import json
+import warnings
 from typing import Iterable
 
 import requests
@@ -99,7 +100,14 @@ class FeaturesAPI:
             while n_required > 0 and data.grown:
                 params.update({"count": n_required, "startIndex": len(data)})
                 response = requests.get(self.ENDPOINT, params=params)
-                data.extend(response.json()["features"])
+                resp_json = response.json()
+                data.extend(resp_json["features"])
+                if "crs" not in resp_json:
+                    warnings.warn(
+                        "It appears you are using an old-style API key, support for which will be removed in the future. "
+                        "To generate a new API key, please visit the OS Data Hub dashboard.",
+                        DeprecationWarning
+                    )
                 n_required = min(100, limit - len(data))
         except json.decoder.JSONDecodeError:
             raise_http_error(response)
@@ -130,8 +138,7 @@ class FeaturesAPI:
             xml_filters (str): Valid OGC XML filter objects
         """
         assert check_argument_types()
-        for xml_filter in xml_filters:
-            self.filters.append(xml_filter)
+        self.filters.extend(xml_filters)
 
 
 if __name__ == "__main__":

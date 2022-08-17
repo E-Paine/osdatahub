@@ -38,4 +38,4 @@ def raise_http_error(response):
         error_str = f"Unsuccessful query: {url}\n\nError {code} - {info[0]}: {info[1]}"
     else:
         error_str = response.text
-    raise HTTPError(error_str)
+    raise HTTPError(error_str) from None
