@@ -1,5 +1,9 @@
+import functools
+import itertools
 import json
+import operator
 import warnings
+from typing import Optional
 
 import requests
 from geojson import FeatureCollection
@@ -43,7 +47,7 @@ class FeaturesAPI:
         "count": 100,
     }
 
-    def __init__(self, key: str, product_name: str, extent: Extent, spatial_filter_type: str = "intersects"):
+    def __init__(self, key: str, product_name: str, extent: Optional[Extent] = None, spatial_filter_type: str = "intersects"):
         self.key: str = key
         self.new_api: bool = False
         self.product: str = product_name
@@ -57,7 +61,7 @@ class FeaturesAPI:
 
     @extent.setter
     def extent(self, o: object):
-        if isinstance(o, Extent):
+        if o is None or isinstance(o, Extent):
             self.__extent = o
         else:
             o_type = type(o)
@@ -91,7 +95,7 @@ class FeaturesAPI:
             FeatureCollection: The results of the query in GeoJSON format
         """
         assert check_argument_types()
-        params = self.__params
+        params = self.__params()
         data = GrowList()
         n_required = min(limit, 100)
         try:
@@ -114,21 +118,23 @@ class FeaturesAPI:
         return features_to_geojson(data.values, self.product.geometry,
                                    self.extent.crs)
 
-    def __construct_filter(self) -> str:
-        filter_body = self.__spatial_filter(self.extent)
-        for _filter in self.filters:
-            filter_body += _filter
-            filter_body = f"<ogc:And>{filter_body}</ogc:And>"
+    def __construct_filter(self, spatial_required: bool = False) -> str:
+        if self.extent is None:
+            filters = self.filters
+            if spatial_required and not any(map(operator.attrgetter("spatial"), filters)):
+                raise ValueError("At least one of the given filters must guarantee spatial bounds.")
+        else:
+            filters = [self.__spatial_filter(self.extent)] + self.filters
+        filter_body = functools.reduce(operator.and_, filters)
         return f"<ogc:Filter>{filter_body}</ogc:Filter>"
 
-    @property
     def __params(self) -> dict:
         return {
             **self.DEFAULTS,
             "key": self.key,
             "srsName": self.extent.crs,
             "typeName": self.product.name,
-            "filter": self.__construct_filter(),
+            "filter": self.__construct_filter(True),
         }
 
     def add_filters(self, *xml_filters: Filter) -> None:

@@ -1,12 +1,10 @@
 from dataclasses import dataclass
-from typing import Union
-
-from shapely.geometry import Polygon, box
-from shapely.geometry.point import Point
+from typing import List, Union
 
 from osdatahub.bbox import BBox
 from osdatahub.ons_api import get_ons_geom
-
+from shapely.geometry import Polygon, MultiPolygon, box
+from shapely.geometry.point import Point
 
 _VALID_CRS = ("EPSG:27700", "EPSG:3857", "EPSG:4326")
 
@@ -23,27 +21,34 @@ class Extent:
 
     """
 
-    polygon: Polygon
+    polygon: Union[Polygon, MultiPolygon]
     crs: str
 
     def __post_init__(self):
-        if not isinstance(self.polygon, Polygon):
+        if not isinstance(self.polygon, (MultiPolygon, Polygon)):
             raise TypeError("Extent expects geometry as a shapley Polygon")
         if self.crs.upper() not in _VALID_CRS:
             raise ValueError(
                 f"Extent CRS must be one of {_VALID_CRS}, got '{self.crs}'"
             )
 
+    @staticmethod
+    def __form_coords(polygon) -> str:
+        return " ".join([f"{c1},{c2}" for c1, c2 in polygon.exterior.coords])
+
+    @property
+    def is_multipolygon(self):
+        return isinstance(self.polygon, MultiPolygon)
+
     @property
     def bbox(self) -> BBox:
         return BBox(*self.polygon.bounds)
 
     @property
-    def xml_coords(self) -> str:
-        coords = self.polygon.exterior.coords
-        if self.crs.upper() == "EPSG:4326":
-            return " ".join([f"{c2},{c1}" for c1, c2 in coords])
-        return " ".join([f"{c1},{c2}" for c1, c2 in coords])
+    def xml_coords(self) -> List[str]:
+        if isinstance(self.polygon, Polygon):
+            return [self.__form_coords(self.polygon)]
+        return [self.__form_coords(poly) for poly in self.polygon.geoms]
 
     @classmethod
     def from_bbox(cls, bbox: Union[tuple, BBox], crs: str) -> "Extent":
@@ -52,7 +57,7 @@ class Extent:
         Args:
             bbox (Union[tuple, BBox]): A bounding box, passed in as either a
                 BBox object or a tuple of the form (west, south, east, north).
-            crs (str): The CRS corresponding to the bouding box, must be either
+            crs (str): The CRS corresponding to the bounding box, must be either
                 ''EPSG:4326', EPSG:27700' or 'EPSG:3857'.
 
         Raises:

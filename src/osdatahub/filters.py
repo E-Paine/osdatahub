@@ -1,6 +1,7 @@
 import functools
-import operator
-from typing import Union
+import warnings
+from operator import and_, or_
+from typing import Callable, Union
 
 from osdatahub import Extent
 
@@ -18,22 +19,17 @@ def _binary_operator(*classes):
 
 
 class Filter:
-    def __init__(self, xml: str):
+    def __init__(self, xml: str, is_spatial: bool = False):
         self.xml: str = xml
+        self.spatial = is_spatial
 
     @staticmethod
     def _apply_op(filter1: str, filter2: str, operation: str) -> str:
         return f"<ogc:{operation}>{filter1}{filter2}</ogc:{operation}>"
 
-    @_binary_operator("Filter", str)
-    def __add__(self, other) -> "Filter":
-        if isinstance(other, Filter):
-            return Filter(self.xml + other.xml)
-        return Filter(self.xml + other)
-
     @_binary_operator("Filter")
     def __and__(self, other) -> "Filter":
-        return Filter(self._apply_op(self.xml, other.xml, "And"))
+        return Filter(self._apply_op(self.xml, other.xml, "And"), self.spatial or other.spatial)
 
     def __bool__(self) -> bool:
         raise NotImplementedError("Did you use a boolean operation, meaning to use a bitwise operation instead?")
@@ -44,14 +40,6 @@ class Filter:
         elif isinstance(other, str):
             return self.xml == other
         return False
-
-    @_binary_operator("Filter", str)
-    def __iadd__(self, other) -> "Filter":
-        if isinstance(other, Filter):
-            self.xml = self.xml + other.xml
-        else:
-            self.xml = self.xml + other
-        return self
 
     @_binary_operator("Filter")
     def __iand__(self, other) -> "Filter":
@@ -65,24 +53,18 @@ class Filter:
 
     @_binary_operator("Filter")
     def __or__(self, other) -> "Filter":
-        return Filter(self._apply_op(self.xml, other.xml, "Or"))
-
-    @_binary_operator("Filter", str)
-    def __radd__(self, other) -> "Filter":
-        if isinstance(other, Filter):
-            return Filter(other.xml + self.xml)
-        return Filter(other + self.xml)
+        return Filter(self._apply_op(self.xml, other.xml, "Or"), self.spatial and other.spatial)
 
     @_binary_operator("Filter")
     def __rand__(self, other):
-        return Filter(self._apply_op(other.xml, self.xml, "And"))
+        return Filter(self._apply_op(other.xml, self.xml, "And"), self.spatial or other.spatial)
 
     def __repr__(self) -> str:
         return repr(self.xml)
 
     @_binary_operator("Filter")
     def __ror__(self, other):
-        return Filter(self._apply_op(other.xml, self.xml, "Or"))
+        return Filter(self._apply_op(other.xml, self.xml, "Or"), self.spatial and other.spatial)
 
     def __str__(self) -> str:
         return self.xml
@@ -97,7 +79,7 @@ def filter_or(*filters: Filter) -> Filter:
     Returns:
         Filter: A valid OGC XML filter
     """
-    return functools.reduce(operator.or_, filters)
+    return functools.reduce(or_, filters)
 
 
 def filter_and(*filters: Filter) -> Filter:
@@ -109,7 +91,19 @@ def filter_and(*filters: Filter) -> Filter:
     Returns:
         Filter: A valid OGC XML filter
     """
-    return functools.reduce(operator.and_, filters)
+    return functools.reduce(and_, filters)
+
+
+def _polygon_xml(coords, crs):
+    return (
+        f"<gml:Polygon xmlns:gml='http://www.opengis.net/gml' srsName='{crs.upper()}'>"
+        "<gml:outerBoundaryIs>"
+        "<gml:LinearRing>"
+        f'<gml:coordinates decimal="." cs="," ts=" ">{coords}</gml:coordinates>'
+        "</gml:LinearRing>"
+        "</gml:outerBoundaryIs>"
+        "</gml:Polygon>"
+    )
 
 
 def spatial_filter(operator: str, extent: Extent) -> Filter:
@@ -122,19 +116,25 @@ def spatial_filter(operator: str, extent: Extent) -> Filter:
     Returns:
         Filter: A valid OGC XML filter
     """
-    coords = extent.xml_coords
-    crs = extent.crs.upper()
+    if extent.is_multipolygon:
+        poly_xml = (
+            f"<gml:MultiPolygon xmlns:gml='http://www.opengis.net/gml' srsName='{extent.crs.upper()}'>"
+            + "".join(
+                "<gml:polygonMember>"
+                + _polygon_xml(coords, extent.crs)
+                + "</gml:polygonMember>"
+                for coords in extent.xml_coords
+            )
+            + "</gml:MultiPolygon>"
+        )
+    else:
+        poly_xml = _polygon_xml(extent.xml_coords[0], extent.crs)
     return Filter(
         f"<ogc:{operator}>"
         "<ogc:PropertyName>SHAPE</ogc:PropertyName>"
-        f"<gml:Polygon xmlns:gml='http://www.opengis.net/gml' srsName='{crs}'>"
-        "<gml:outerBoundaryIs>"
-        "<gml:LinearRing>"
-        f'<gml:coordinates decimal="." cs="," ts=" ">{coords}</gml:coordinates>'
-        "</gml:LinearRing>"
-        "</gml:outerBoundaryIs>"
-        "</gml:Polygon>"
-        f"</ogc:{operator}>"
+        f"{poly_xml}"
+        f"</ogc:{operator}>",
+        True
     )
 
 
